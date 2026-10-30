@@ -35,7 +35,7 @@ def provision_asset(asset: dict, root: Path, check_only: bool = False) -> Path:
     try:
         with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as output:
             temporary = Path(output.name)
-            request = urllib.request.Request(asset["url"], headers={"User-Agent": "firmngin-image-counter-build"})
+            request = urllib.request.Request(asset["url"], headers={"User-Agent": "object-counter-build"})
             with urllib.request.urlopen(request, timeout=120) as response:
                 size = 0
                 while chunk := response.read(1024 * 1024):
