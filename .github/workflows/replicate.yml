@@ -20,14 +20,17 @@ jobs:
             /opt/az /usr/local/share/boost /usr/share/swift \
             /usr/local/.ghcup /opt/hostedtoolcache \
             /usr/local/share/chromium /usr/local/lib/node_modules \
-            /usr/lib/jvm /opt/microsoft
+            /usr/lib/jvm /opt/microsoft \
+            /usr/share/miniconda /usr/local/share/powershell \
+            /var/lib/gems /opt/pipx
           sudo apt-get clean
-          sudo docker image prune -af
-          sudo docker builder prune -af
+          sudo swapoff -a
+          sudo rm -f /swapfile
           df -h /
 
-      # Layers, build cache and the cog export tar all default to the root disk.
-      - name: Relocate Docker storage and TMPDIR to /mnt
+      # Keep docker's data-root also on /mnt in case a runner ships one as a
+      # separate disk; on stock runners it is the same 72 GB disk.
+      - name: Point docker data-root at /mnt
         run: |
           sudo systemctl stop docker.socket docker.service containerd.service
           sudo mkdir -p /etc/docker /mnt/docker /mnt/tmp
@@ -55,11 +58,13 @@ jobs:
           TMPDIR: /mnt/tmp
         run: cog build -t r8.im/asyasyarif/object-counter
 
-      # The export tar is ~26 GB and the runner's single 72 GB disk holds it,
-      # the image layers and the BuildKit cache at once. Drop the cache first.
+      # The export tar (~26 GB) has to coexist with the unpacked image
+      # (~26 GB) on one disk. Drop everything pruneable first, including
+      # pip/uv cache mounts that survive layer pruning.
       - name: Drop build cache before export
         run: |
           sudo docker builder prune -af
+          sudo docker builder prune -af --filter type=exec.cachemount
           df -h / /mnt
 
       - name: Push to r8.im
