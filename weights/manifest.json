@@ -1,0 +1,14 @@
+[
+  {
+    "path": "weights/yoloe-26x-seg.pt",
+    "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg.pt",
+    "sha256": "d08d390a08f98195f7c87807839fe4ff93a5491645fef1bc3bf0700efafdd639",
+    "size": 171640453
+  },
+  {
+    "path": "mobileclip2_b.ts",
+    "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip2_b.ts",
+    "sha256": "35d7f213e4d75f38514e4656ad3cb91158bd33e3805d8ac349f23b186f66982f",
+    "size": 253794476
+  }
+]
