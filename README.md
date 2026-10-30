@@ -34,10 +34,12 @@ small grammar, not an LLM; explicit comma-separated category names work best.
 Colors, materials, and unfamiliar categories are best effort and can return
 zero detections. Counts describe detections and can be wrong.
 
-Cross-class boxes with IoU ≥0.90 are treated as duplicate predictions; the higher
-confidence survives with a stable tie break. Same-class suppression is left to
-YOLOE. This conservative policy reduces duplicate overlapping prompts but can
-still merge nearly coincident real objects; evaluate it on your domain.
+Cross-class boxes with IoU ≥0.60 and a higher-confidence contrast class are
+suppressed (see below). Cross-class boxes with IoU ≥0.90 are treated as duplicate
+predictions; the higher confidence survives with a stable tie break. Same-class
+suppression is left to YOLOE. This conservative policy reduces duplicate
+overlapping prompts but can still merge nearly coincident real objects; evaluate
+it on your domain.
 Inference uses external class-aware NMS (`nms=None`, `iou=0.45`,
 `agnostic_nms=False`), preventing broad cross-class suppression before the
 documented near-identical-box policy. IoU 0.45 removed duplicate detections on
@@ -46,6 +48,21 @@ distinct same-category objects with heavy overlap. Survivors are clipped,
 validated, sorted by `(y1,x1,label,-confidence)`, then
 assigned `obj_001…`. The same list drives annotation and JSON. The synchronous
 Cog runner plus a model lock serializes class mutation and inference.
+
+### Hidden contrast classes
+
+A single requested category has no competing class, so YOLOE's per-class sigmoid
+scores label every person-like region `woman`. For prompts where one category is
+listed, the detector appends curated contrast classes from
+`config/contrast_classes.json` (`woman → man, girl, boy`, `cat → dog`,
+`car → truck, bus`, `red helmet → other helmet colours`, …), capped at 16 total
+classes per request. Requested classes keep indices `0..n-1`.
+
+Contrast detections never reach the output. They only drop a requested box when
+they overlap it at IoU ≥0.60 with a strictly higher confidence. Contrast boxes,
+IDs, labels, counts, and JSON entries are otherwise discarded. Prompts whose
+categories have no curated contrast entry behave exactly as before. The map is
+deliberately small and heuristic; unknown or unusual prompts get no help.
 
 ## Build and publish with GitHub Actions
 

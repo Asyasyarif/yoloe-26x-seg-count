@@ -6,6 +6,11 @@ Same-class NMS belongs to YOLOE. Lower overlaps and nested boxes survive because
 co-located categories can be distinct physical objects. This geometric heuristic
 can still merge almost perfectly aligned different objects; benchmark this policy
 for overlapping category prompts before claiming counting accuracy.
+
+Contrast classes (for example ``man`` for a ``woman`` prompt) are inference-only:
+they give the sigmoid per-class scores a competing class, then their boxes are
+discarded after suppressing overlapping requested boxes. They never reach IDs,
+annotations, counts, or result.json.
 """
 
 from collections.abc import Mapping, Sequence
@@ -14,6 +19,7 @@ import math
 from src.schema import DetectedObject
 
 CROSS_CLASS_DUPLICATE_IOU = 0.90
+CONTRAST_SUPPRESSION_IOU = 0.60
 
 
 def _iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
@@ -31,6 +37,7 @@ def normalize_detections(
     width: int,
     height: int,
     confidence: float,
+    contrast_classes: Sequence[str] = (),
 ) -> list[DetectedObject]:
     """Validate request-relative labels, clip/filter, deduplicate, sort, assign IDs.
 
@@ -38,6 +45,8 @@ def normalize_detections(
     error rather than silently labeling a prediction with a stale request class.
     Confidence is filtered before any serialization rounding. Pixel boxes use
     floor(minimum)/ceil(maximum) after clipping to retain subpixel detections.
+    ``classes`` keep model indices 0..n-1; ``contrast_classes`` follow them and are
+    only used to drop overlapping requested boxes with a higher contrast score.
     """
     if (not isinstance(width, int) or isinstance(width, bool) or width <= 0
             or not isinstance(height, int) or isinstance(height, bool) or height <= 0
@@ -45,16 +54,20 @@ def normalize_detections(
         raise ValueError("Image dimensions and confidence threshold are invalid.")
     if not classes or len(set(classes)) != len(classes):
         raise ValueError("Requested classes must be nonempty and unique.")
+    if len(set(contrast_classes)) != len(contrast_classes) or set(contrast_classes) & set(classes):
+        raise ValueError("Contrast classes must be unique and distinct from requested classes.")
+    all_classes = list(classes) + list(contrast_classes)
     if not len(boxes) == len(confidences) == len(class_indices):
         raise ValueError("Model box, confidence, and class arrays must have equal lengths.")
     candidates: list[tuple[tuple[float, ...], float, int, str]] = []
+    contrast: list[tuple[tuple[float, ...], float, int, str]] = []
     for box, score, raw_index in zip(boxes, confidences, class_indices):
         try:
             index_float = float(raw_index)
             if not math.isfinite(index_float) or not index_float.is_integer():
                 raise ValueError
             index = int(index_float)
-            if not 0 <= index < len(classes) or names[index] != classes[index]:
+            if not 0 <= index < len(all_classes) or names[index] != all_classes[index]:
                 raise ValueError
         except (KeyError, IndexError, TypeError, ValueError, OverflowError) as exc:
             raise ValueError("Model class mapping does not match the current requested categories.") from exc
@@ -71,7 +84,7 @@ def normalize_detections(
                    max(0.0, min(float(width), x2)), max(0.0, min(float(height), y2)))
         if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
             continue
-        candidates.append((clipped, score, index, classes[index]))
+        (contrast if index >= len(classes) else candidates).append((clipped, score, index, all_classes[index]))
 
     candidates.sort(key=lambda item: (-item[1], item[3], item[0], item[2]))
     surviving: list[tuple[tuple[float, ...], float, int, str]] = []
@@ -80,10 +93,13 @@ def normalize_detections(
                for other in surviving):
             continue
         surviving.append(candidate)
+    surviving = [candidate for candidate in surviving
+                 if not any(score > candidate[1] and _iou(candidate[0], contrast_box) >= CONTRAST_SUPPRESSION_IOU
+                            for contrast_box, score, _, _ in contrast)]
 
     records: list[tuple[dict[str, int], float, int, str]] = []
     for box, score, index, label in surviving:
-        pixel_box = dict(zip(("x1", "y1", "x2", "y2"),
+        pixel_box: dict[str, int] = dict(zip(("x1", "y1", "x2", "y2"),
                              (math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]), math.ceil(box[3]))))
         records.append((pixel_box, score, index, label))
     records.sort(key=lambda item: (item[0]["y1"], item[0]["x1"], item[3], -item[1],

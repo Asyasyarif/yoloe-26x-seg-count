@@ -261,10 +261,19 @@ Official docs state that the **first `set_classes()`** for YOLOE-26 installs/nee
 ### Inference and postprocessing
 
 1. Resolve text phrases from the prompt.
-2. Set classes on the YOLOE-26x model **for this request**.
+2. Set classes on the YOLOE-26x model **for this request**, appending curated
+   *contrast* classes from `config/contrast_classes.json` (woman→man, cat→dog,
+   car→truck/bus, helmet colours, …) so a lone category has a competitor for
+   YOLOE's per-class sigmoid scores. Requested classes keep indices `0..n-1`;
+   at most 16 classes total per request. Prompts without a curated contrast
+   entry are sent exactly as before.
 3. Run prediction once (candidate `imgsz=image_size`; `conf=confidence`; no second hidden inference).
 4. Read `result.boxes.xyxy`, `.conf`, `.cls`, and `result.names`; optionally inspect masks only for diagnostics, **not output**.
-5. Ensure each reported class belongs to the requested phrase list. Never assume fixed class IDs.
+5. Ensure each reported class belongs to the requested phrase list (or to the
+   contrast tail). Never assume fixed class IDs. A requested box is dropped only
+   when a strictly higher-confidence contrast box overlaps it at IoU ≥0.60; then
+   **all** contrast boxes are discarded. They must never appear in annotations,
+   counts, `result.json`, or `obj_NNN` IDs.
 6. Evaluate YOLOE's built-in NMS/class-agnostic behavior. In overlapping/near-synonymous prompts, prevent double-counting of the *same physical instance* with a documented, tested cross-class duplicate suppression policy. Do **not** suppress legitimately overlapping objects indiscriminately.
 7. Clip boxes to oriented source dimensions; discard invalid/NaN/degenerate boxes.
 8. Deterministically sort by `(y1, x1, label, -confidence)` (with stable tie break); assign `obj_001..obj_N`.

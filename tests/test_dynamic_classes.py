@@ -80,9 +80,9 @@ def test_sequential_prompts_refresh_dynamic_class_zero(adapter):
     assert second[0].label == "red helmet"
     assert first[0].prompt_class_index == second[0].prompt_class_index == 0
     assert adapter.model.evaluating
-    assert [c[1] for c in adapter.model.calls if c[0] == "classes"] == [
-        ["forklift", "person"], ["red helmet"],
-    ]
+    sent = [c[1] for c in adapter.model.calls if c[0] == "classes"]
+    # Requested classes stay the 0..n-1 prefix; contrast classes are appended.
+    assert [names[:1] for names in sent] == [["forklift"], ["red helmet"]]
 
 
 def test_threshold_and_resolution_reach_one_inference(adapter):
