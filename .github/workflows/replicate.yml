@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      MODEL_NAME: ${{ inputs.model_name || vars.REPLICATE_MODEL }}
+      MODEL_NAME: ${{ inputs.model_name || vars.REPLICATE_MODEL || 'asyasyarif/firmngin-image-counter' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -86,20 +86,21 @@ jobs:
           CLI_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
           API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: |
-          if [[ -z "$MODEL_NAME" || -z "$CLI_TOKEN" || -z "$API_TOKEN" ]]; then
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo '### Build verified; publication pending configuration' >> "$GITHUB_STEP_SUMMARY"
-            echo 'Set REPLICATE_MODEL, REPLICATE_CLI_AUTH_TOKEN, and REPLICATE_API_TOKEN, then run this workflow again.' >> "$GITHUB_STEP_SUMMARY"
-            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-              echo '::error::Replicate model variable and both authentication secrets are required for publication.'
-              exit 1
-            fi
+          if [[ -z "$CLI_TOKEN" ]]; then
+            echo '::error::Build passed, but push cannot authenticate. Set repository secret REPLICATE_CLI_AUTH_TOKEN.'
+            echo '### Build verified; push failed: missing REPLICATE_CLI_AUTH_TOKEN' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          [[ "$MODEL_NAME" =~ ^[A-Za-z0-9_-]+/[a-z0-9_-]+$ ]] || { echo '::error::Expected owner/model'; exit 1; }
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+          if [[ -n "$API_TOKEN" ]]; then
+            echo 'api_ready=true' >> "$GITHUB_OUTPUT"
           else
-            [[ "$MODEL_NAME" =~ ^[A-Za-z0-9_-]+/[a-z0-9_-]+$ ]] || { echo '::error::Expected owner/model'; exit 1; }
-            echo 'ready=true' >> "$GITHUB_OUTPUT"
+            echo 'api_ready=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::REPLICATE_API_TOKEN is absent. Push will run; cloud API smoke test will be skipped.'
           fi
       - name: Verify target Replicate model
-        if: steps.publish.outputs.ready == 'true'
+        if: steps.publish.outputs.api_ready == 'true'
         env:
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: python scripts/replicate_smoke.py --model "$MODEL_NAME" --check-model --report reports/pre-push-model.json
@@ -117,15 +118,22 @@ jobs:
           docker run --rm --network none --entrypoint python -v "$PWD/reports:/reports" "$IMAGE_REF" scripts/verify_offline.py --device cpu --image-size 640 --output /reports/pushed-offline.json
           docker run --rm --network none --entrypoint python "$IMAGE_REF" -m pip freeze > reports/pushed-runtime-requirements.txt
       - name: Smoke-test published API in both output modes
-        if: steps.publish.outputs.ready == 'true'
+        if: steps.publish.outputs.api_ready == 'true'
         env:
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: python scripts/replicate_smoke.py --model "$MODEL_NAME" --image examples/sample.jpg --push-result reports/push.json --previous-model reports/pre-push-model.json --report reports/replicate.json
       - name: Summarize publication
         if: steps.publish.outputs.ready == 'true'
+        env:
+          API_READY: ${{ steps.publish.outputs.api_ready }}
         run: |
-          echo '### Published and smoke-tested' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Published; exact pushed image verified offline' >> "$GITHUB_STEP_SUMMARY"
           printf 'Model: https://replicate.com/%s\n' "$MODEL_NAME" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$API_READY" == true ]]; then
+            echo 'Cloud PNG/ZIP API smoke tests passed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Cloud API smoke tests pending REPLICATE_API_TOKEN.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

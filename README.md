@@ -60,16 +60,18 @@ To enable push after build:
 
 1. Create a Replicate model under the intended account, initially using a GPU
    with generous memory. Record its actual hardware in the benchmark report.
-2. Set repository variable `REPLICATE_MODEL` to `owner/model`.
+2. Optionally set repository variable `REPLICATE_MODEL` to `owner/model`.
+   Default: `asyasyarif/firmngin-image-counter`.
 3. Set secret `REPLICATE_CLI_AUTH_TOKEN` from https://replicate.com/auth/token.
-4. Set secret `REPLICATE_API_TOKEN` from https://replicate.com/account/api-tokens
+4. Optionally set secret `REPLICATE_API_TOKEN` from https://replicate.com/account/api-tokens
    for checking the model and testing the published API. These tokens have
    different purposes; do not commit either.
 5. Push `main`, or run **Build and publish to Replicate** manually. Its optional
    `model_name` input overrides the variable. Pull requests run tests only.
 
-Without deployment configuration, pushes still build/test and clearly report
-publication as pending. A manual publish without credentials fails explicitly.
+Without the CLI secret, the workflow fails explicitly after building; it cannot
+report deployment success. The API token is optional for push, but required to
+verify the cloud API. If absent, that verification is clearly reported pending.
 Once configured, the workflow logs in, `cog push` publishes, and real Replicate
 predictions validate both modes at 1280 and the five-input schema. The workflow
 summary links the deployed model only after those checks pass.
