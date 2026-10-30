@@ -107,6 +107,39 @@ def test_class_list_stays_within_model_limit_and_is_deterministic():
     assert len(contrast_classes(["woman", "man", "cat", "dog", "car", "truck"])) <= MAX_MODEL_CLASSES
 
 
+def test_clipboard_prompt_can_suppress_a_laptop_label(adapter):
+    # "laptop" on a clipboard shot was scored as a laptop with no competitor.
+    boxes = [[10, 10, 100, 180], [12, 12, 98, 178]]
+    objects = detect(adapter, ["laptop"], boxes, [0.55, 0.91], [0, 1])
+    assert adapter.model.classes == ["laptop", "clipboard", "tablet", "book", "folder", "notebook"]
+    assert objects == []
+
+
+@pytest.mark.parametrize("requested,expected", [
+    ("clipboard", ["laptop", "tablet", "book", "folder", "notebook"]),
+    ("tablet", ["laptop", "phone", "clipboard", "notebook"]),
+    ("phone", ["tablet", "remote"]),
+    ("remote", ["phone", "tablet"]),
+    ("bottle", ["cup", "can"]),
+    ("cup", ["bottle", "mug", "can"]),
+    ("chair", ["sofa", "bench"]),
+    ("sofa", ["chair", "bed"]),
+    ("bag", ["backpack", "suitcase"]),
+    ("backpack", ["bag", "suitcase"]),
+])
+def test_common_confusions_have_curated_contrasts(requested, expected):
+    assert contrast_classes([requested]) == expected
+
+
+def test_every_contrast_entry_is_self_consistent():
+    # No entry may list itself, repeat a name, or overflow the per-request cap.
+    from src.detector import _CONTRAST
+    for name, extras in _CONTRAST.items():
+        assert name not in extras, name
+        assert len(extras) == len(set(extras)), name
+        assert 1 + len(contrast_classes([name])) <= MAX_MODEL_CLASSES, name
+
+
 def test_contrast_classes_must_not_duplicate_requested_classes():
     with pytest.raises(ValueError):
         normalize_detections([[0, 0, 5, 5]], [0.9], [0], {0: "woman", 1: "woman"},

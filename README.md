@@ -55,7 +55,8 @@ A single requested category has no competing class, so YOLOE's per-class sigmoid
 scores label every person-like region `woman`. For prompts where one category is
 listed, the detector appends curated contrast classes from
 `config/contrast_classes.json` (`woman → man, girl, boy`, `cat → dog`,
-`car → truck, bus`, `red helmet → other helmet colours`, …), capped at 16 total
+`car → truck, bus`, `red helmet → other helmet colours`,
+`laptop → clipboard, tablet, book, folder, notebook`, …), capped at 16 total
 classes per request. Requested classes keep indices `0..n-1`.
 
 Contrast detections never reach the output. They only drop a requested box when
@@ -63,6 +64,13 @@ they overlap it at IoU ≥0.60 with a strictly higher confidence. Contrast boxes
 IDs, labels, counts, and JSON entries are otherwise discarded. Prompts whose
 categories have no curated contrast entry behave exactly as before. The map is
 deliberately small and heuristic; unknown or unusual prompts get no help.
+
+Curated pairs cover people, animals, vehicles, helmet colours, and common
+look-alike office/household objects (`phone → tablet, remote`,
+`bottle → cup, can`, `chair → sofa, bench`, `bag → backpack, suitcase`,
+`box → carton, crate`). They are symmetric where the confusion is, so either
+spelling of a pair benefits. A wrong contrast can only cost a detection when it
+overlaps the requested box and outscores it; an unrelated request is unchanged.
 
 ## Build and publish with GitHub Actions
 

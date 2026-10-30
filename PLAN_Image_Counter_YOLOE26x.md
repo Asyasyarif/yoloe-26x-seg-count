@@ -263,7 +263,9 @@ Official docs state that the **first `set_classes()`** for YOLOE-26 installs/nee
 1. Resolve text phrases from the prompt.
 2. Set classes on the YOLOE-26x model **for this request**, appending curated
    *contrast* classes from `config/contrast_classes.json` (woman→man, cat→dog,
-   car→truck/bus, helmet colours, …) so a lone category has a competitor for
+   car→truck/bus, laptop→clipboard/tablet/book/folder/notebook, phone→tablet/remote,
+   bottle→cup/can, chair→sofa/bench, bag→backpack/suitcase, helmet colours, …) so
+   a lone category has a competitor for
    YOLOE's per-class sigmoid scores. Requested classes keep indices `0..n-1`;
    at most 16 classes total per request. Prompts without a curated contrast
    entry are sent exactly as before.
