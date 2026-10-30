@@ -56,6 +56,10 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
           TMPDIR: /mnt/tmp
+          # cog.yaml `sdk_version` pins only the cog SDK wheel; coglet is
+          # resolved separately and otherwise floats to the newest PyPI release.
+          # Pin it so the inference server is reproducible.
+          COGLET_WHEEL: pypi:0.23.1
         run: cog build -t r8.im/asyasyarif/object-counter
 
       # The export tar (~26 GB) has to coexist with the unpacked image

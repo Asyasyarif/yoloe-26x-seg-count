@@ -433,6 +433,14 @@ run: "run.py:Runner"
 
 Use modern `run:` with Cog `BaseRunner`. Legacy `predict:` / `BasePredictor` should not be used for new code. Verify `cog doctor` and dependency compatibility. Keep default single-run per worker for `set_classes()` safety.
 
+The output shape is one `Path` and the generated Output schema is a single
+`{"type":"string","format":"uri"}`. Note that `sdk_version` pins only the `cog`
+wheel: coglet is resolved separately, so the build must set `COGLET_WHEEL` to pin
+the inference server too. A published prediction may still be read back as
+`["https://…"]` because of coglet's array-shaped progress webhook
+(replicate/cog#3205); that is a runtime bug, not a reason to change the interface
+or switch to `BasePredictor`.
+
 ### Required example tests
 
 ```bash

@@ -14,3 +14,8 @@ corpus or a manually verified counting ground truth.
 The public API output is a single URL. Download it immediately if needed beyond
 Replicate's API retention window. ZIP mode contains the structured result;
 PNG mode has no JSON response.
+
+A published prediction can occasionally be read back as `["https://…"]`
+(a one-element array). The model declares and returns one URI; the array comes from
+coglet's progress webhook (see "Output shape on Replicate" in the README). Treat
+a one-element list as the same single artifact.

@@ -35,6 +35,23 @@ def api_request(path: str, body: dict | None = None) -> dict:
         raise RuntimeError(f"Replicate API {path} returned HTTP {error.code}") from None
 
 
+def validate_output_url(output: object) -> str:
+    """Return the artifact URL, accepting a one-element list from coglet 0.23.x.
+
+    coglet 0.23.x sends a non-terminal `output` webhook whose `output` is the
+    accumulated outputs array even for a scalar `Path` (replicate/cog#3205).
+    A client that applies webhooks in arrival order can therefore end a
+    successful prediction holding `["https://..."]` instead of the URL. The
+    model's Output schema is still one URI, so this is a runtime quirk, not a
+    model contract change: both shapes describe the same single artifact.
+    """
+    if isinstance(output, list) and len(output) == 1:
+        output = output[0]
+    if not isinstance(output, str) or not output.startswith("https://"):
+        raise ValueError("Expected exactly one HTTPS artifact URL, never zero, many, or a dict")
+    return output
+
+
 def validate_artifact(payload: bytes, zipped: bool, expected_classes: list[str] | None = None) -> dict | None:
     png_magic = b"\x89PNG\r\n\x1a\n"
     if not zipped:
@@ -129,9 +146,13 @@ def main() -> None:
         if prediction["status"] != "succeeded":
             raise RuntimeError(f"Prediction {prediction['id']} {prediction['status']}: {prediction.get('error')}")
         output = prediction.get("output")
-        if not isinstance(output, str) or not output.startswith("https://"):
-            raise ValueError("Expected exactly one HTTPS artifact URL, never a list or dict")
-        with urllib.request.urlopen(output, timeout=120) as response:
+        output_url = validate_output_url(output)
+        if not isinstance(output, str):
+            # Record the quirk so a green workflow never hides a runtime regression.
+            measurements_output_shape = "array"
+        else:
+            measurements_output_shape = "string"
+        with urllib.request.urlopen(output_url, timeout=120) as response:
             payload = response.read(50 * 1024 * 1024 + 1)
         if len(payload) > 50 * 1024 * 1024:
             raise ValueError("Smoke output exceeded the 50 MB verification limit")
@@ -141,6 +162,7 @@ def main() -> None:
             if result["input"]["prompt"] != prompt or result["input"]["image_size"] != 1280:
                 raise ValueError("Output request metadata differs from submitted prompt/resolution")
         measurements.append({"prediction_id": prediction["id"], "prompt": prompt, "output_zip": zipped,
+                             "output_shape": measurements_output_shape,
                              "wall_seconds": time.monotonic() - started, "metrics": prediction.get("metrics"),
                              "summary": result["summary"] if result else None})
     report = {"model": args.model, "version": version["id"], "image": pushed_image, "measurements": measurements,

@@ -20,6 +20,33 @@ Labels avoid each other where space permits. Long labels scale to fit;
 tiny or crowded images can still limit readability. ZIP JSON retains full IDs
 and category names.
 
+## Output shape on Replicate
+
+The model's declared Output schema is a single `{"type": "string", "format": "uri"}`,
+and the final prediction value is always one URL. A published prediction can
+nonetheless be read back as a one-element array (`["https://…"]`).
+
+That is a bug in the Cog inference server (coglet), not in this model, and it is
+not caused by `BaseRunner`/`run`. For a scalar `-> Path`, coglet uploads the file
+and appends the URL to its internal streaming-output list, then emails a
+non-terminal `output` webhook carrying that list (`["url"]`). The terminal value
+is correctly unwrapped, but each progress webhook is sent from its own task, so
+the list-shaped one can arrive **after** the terminal one. Any client that applies
+webhooks in arrival order ends up with the array. See
+[replicate/cog#3205](https://github.com/replicate/cog/issues/3205); present in
+0.18–0.23.1, fixed upstream after 0.23.1.
+
+Consequences here:
+
+- `scripts/replicate_smoke.py` accepts a one-element array as the same single
+  artifact and records which shape it saw under `output_shape` in the report, so
+  a green workflow cannot hide a runtime regression.
+- `COGLET_WHEEL=pypi:0.23.1` is set on the build step. `build.sdk_version` pins
+  only the `cog` wheel; coglet is resolved separately and would otherwise float
+  to whatever is newest on PyPI. Pinning makes the inference server reproducible.
+- `tests/test_output_schema.py` asserts the generated Output schema is one URI and
+  never `array`. It runs on CPU without weights.
+
 ## Prompts
 
 Prefer `person, red helmet, forklift`. Simple wrappers (`count`, `find`, `detect`,
@@ -107,7 +134,9 @@ version cannot accidentally pass publication checks.
 ## Local development
 
 Runtime: Python 3.11, Cog SDK/CLI 0.23.1, Ultralytics 8.4.193, PyTorch 2.8.0 /
-torchvision 0.23.0 CUDA 12.8, Pillow 11.3.0. The CLIP tokenizer is pinned to a
+torchvision 0.23.0 CUDA 12.8, Pillow 11.3.0. coglet is pinned to 0.23.1 via
+`COGLET_WHEEL` in the publish workflow (and can be set locally the same way);
+`sdk_version` alone does not pin it. The CLIP tokenizer is pinned to a
 full commit. Direct dependencies are pinned; each build archives all resolved
 transitive versions. See [weights/README.md](weights/README.md) for model hashes.
 
@@ -117,7 +146,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 python3 scripts/prepare_assets.py
 cog doctor
-cog build -t image-counter:local
+COGLET_WHEEL=pypi:0.23.1 cog build -t image-counter:local
 cog run image-counter:local -i image=@examples/sample.jpg -i prompt="person, bus" -o annotated.png
 cog run image-counter:local -i image=@examples/sample.jpg -i prompt="person, bus" -i output_zip=true -o results.zip
 ```
