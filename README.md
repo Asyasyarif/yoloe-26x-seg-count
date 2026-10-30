@@ -61,7 +61,7 @@ To enable push after build:
 1. Create a Replicate model under the intended account, initially using a GPU
    with generous memory. Record its actual hardware in the benchmark report.
 2. Optionally set repository variable `REPLICATE_MODEL` to `owner/model`.
-   Default: `asyasyarif/firmngin-image-counter`.
+   Default: `asyasyarif/object-counter`.
 3. Set secret `REPLICATE_CLI_AUTH_TOKEN` from https://replicate.com/auth/token.
 4. Optionally set secret `REPLICATE_API_TOKEN` from https://replicate.com/account/api-tokens
    for checking the model and testing the published API. These tokens have
