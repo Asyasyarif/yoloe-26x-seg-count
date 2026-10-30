@@ -5,6 +5,16 @@ import os
 from pathlib import Path
 
 
+def _redact(value, secret: str):
+    if isinstance(value, str):
+        return value.replace(secret, "[REDACTED]") if secret else value
+    if isinstance(value, dict):
+        return {_redact(key, secret): _redact(item, secret) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item, secret) for item in value]
+    return value
+
+
 def make_report(directory: Path, environment: dict) -> dict:
     report = {key.lower(): environment.get(key) for key in (
         "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "JOB_STATUS",
@@ -24,11 +34,8 @@ def make_report(directory: Path, environment: dict) -> dict:
         if path.is_file():
             text = path.read_text(errors="replace")[-24000:]
             report[filename] = text.replace(secret, "[REDACTED]") if secret else text
-    # A second pass also covers any credential accidentally present in JSON.
-    serialized = json.dumps(report)
-    if secret:
-        serialized = serialized.replace(secret, "[REDACTED]")
-    return json.loads(serialized)
+    # Redact decoded strings before JSON escaping can change their bytes.
+    return _redact(report, secret)
 
 
 if __name__ == "__main__":
