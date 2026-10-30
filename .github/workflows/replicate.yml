@@ -46,6 +46,8 @@ jobs:
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write
     env:
       MODEL_NAME: ${{ inputs.model_name || vars.REPLICATE_MODEL || 'asyasyarif/firmngin-image-counter' }}
     steps:
@@ -74,8 +76,11 @@ jobs:
       - name: Validate Cog configuration
         run: cog doctor
       - name: Build GPU image on GitHub Actions
-        run: cog build -t image-counter:ci
+        id: image_build
+        shell: bash
+        run: cog build -t image-counter:ci 2>&1 | tee reports/build.log
       - name: Test real model offline with two dynamic prompt sets
+        id: offline
         run: |
           mkdir -p reports
           docker run --rm --network none --entrypoint python -v "$PWD/reports:/reports" image-counter:ci scripts/verify_offline.py --image examples/sample.jpg --device cpu --image-size 640 --output /reports/offline.json
@@ -105,12 +110,13 @@ jobs:
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: python scripts/replicate_smoke.py --model "$MODEL_NAME" --check-model --report reports/pre-push-model.json
       - name: Authenticate and push container
+        id: push
         if: steps.publish.outputs.ready == 'true'
         env:
           REPLICATE_CLI_AUTH_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
         run: |
           printf '%s' "$REPLICATE_CLI_AUTH_TOKEN" | cog login --token-stdin
-          cog push "r8.im/$MODEL_NAME" --json > reports/push.json
+          cog push "r8.im/$MODEL_NAME" --json > reports/push.json 2> >(tee reports/push.log >&2)
       - name: Verify the exact immutable pushed image offline
         if: steps.publish.outputs.ready == 'true'
         run: |
@@ -118,6 +124,7 @@ jobs:
           docker run --rm --network none --entrypoint python -v "$PWD/reports:/reports" "$IMAGE_REF" scripts/verify_offline.py --device cpu --image-size 640 --output /reports/pushed-offline.json
           docker run --rm --network none --entrypoint python "$IMAGE_REF" -m pip freeze > reports/pushed-runtime-requirements.txt
       - name: Smoke-test published API in both output modes
+        id: cloud_smoke
         if: steps.publish.outputs.api_ready == 'true'
         env:
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
@@ -134,6 +141,32 @@ jobs:
           else
             echo 'Cloud API smoke tests pending REPLICATE_API_TOKEN.' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Publish a Git-readable build and push report
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          IMAGE_BUILD_OUTCOME: ${{ steps.image_build.outcome }}
+          OFFLINE_OUTCOME: ${{ steps.offline.outcome }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          CLOUD_SMOKE_OUTCOME: ${{ steps.cloud_smoke.outcome }}
+          CLI_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+        run: |
+          python scripts/ci_status.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          STATUS_DIR=$(mktemp -d)
+          if git ls-remote --exit-code --heads origin ci-status >/dev/null 2>&1; then
+            git fetch origin ci-status
+            git worktree add -B ci-status "$STATUS_DIR" FETCH_HEAD
+          else
+            git worktree add --detach "$STATUS_DIR" HEAD
+            git -C "$STATUS_DIR" checkout --orphan ci-status
+            git -C "$STATUS_DIR" rm -rf .
+          fi
+          cp reports/ci-status.json "$STATUS_DIR/status.json"
+          git -C "$STATUS_DIR" add status.json
+          git -C "$STATUS_DIR" commit -m "Report workflow run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+          git -C "$STATUS_DIR" push origin HEAD:refs/heads/ci-status
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
