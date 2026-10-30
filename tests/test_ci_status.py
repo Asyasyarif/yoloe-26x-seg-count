@@ -18,3 +18,10 @@ def test_ci_report_redacts_decoded_json_before_escaping(tmp_path, secret):
     (tmp_path / "push.json").write_text(json.dumps({"message": secret}))
     report = make_report(tmp_path, {"CLI_TOKEN": secret})
     assert report["push.json"]["message"] == "[REDACTED]"
+
+
+def test_ci_report_identifies_authentication_failure_without_token(tmp_path):
+    (tmp_path / "login.log").write_text("CLI authentication failed for fake-cli-token")
+    report = make_report(tmp_path, {"CLI_TOKEN": "fake-cli-token", "AUTH_OUTCOME": "failure"})
+    assert report["auth_outcome"] == "failure"
+    assert report["login.log"] == "CLI authentication failed for [REDACTED]"

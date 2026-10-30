@@ -18,7 +18,7 @@ def _redact(value, secret: str):
 def make_report(directory: Path, environment: dict) -> dict:
     report = {key.lower(): environment.get(key) for key in (
         "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "JOB_STATUS",
-        "IMAGE_BUILD_OUTCOME", "OFFLINE_OUTCOME", "PUSH_OUTCOME", "CLOUD_SMOKE_OUTCOME", "MODEL_NAME",
+        "IMAGE_BUILD_OUTCOME", "AUTH_OUTCOME", "OFFLINE_OUTCOME", "PUSH_OUTCOME", "CLOUD_SMOKE_OUTCOME", "MODEL_NAME",
     )}
     report["run_url"] = f"https://github.com/{environment.get('GITHUB_REPOSITORY')}/actions/runs/{environment.get('GITHUB_RUN_ID')}"
     secret = environment.get("CLI_TOKEN", "")
@@ -29,7 +29,7 @@ def make_report(directory: Path, environment: dict) -> dict:
                 report[filename] = json.loads(path.read_text())
             except ValueError:
                 pass
-    for filename in ("build.log", "push.log"):
+    for filename in ("login.log", "build.log", "push.log"):
         path = directory / filename
         if path.is_file():
             text = path.read_text(errors="replace")[-24000:]

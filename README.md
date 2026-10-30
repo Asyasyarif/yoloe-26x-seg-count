@@ -69,7 +69,7 @@ To enable push after build:
 5. Push `main`, or run **Build and publish to Replicate** manually. Its optional
    `model_name` input overrides the variable. Pull requests run tests only.
 
-Without the CLI secret, the workflow fails explicitly after building; it cannot
+Without a valid CLI secret, the workflow fails explicitly before building; it cannot
 report deployment success. The API token is optional for push, but required to
 verify the cloud API. If absent, that verification is clearly reported pending.
 Once configured, the workflow logs in, `cog push` publishes, and real Replicate
