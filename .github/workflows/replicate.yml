@@ -119,8 +119,20 @@ jobs:
       - name: Push container
         id: push
         if: steps.publish.outputs.ready == 'true'
+        env:
+          # Chunked multipart push: Docker's monolithic layer upload hits CDN body
+          # limits on multi-GB CUDA layers (replicate/cog#3164, error "unknown blob").
+          COG_PUSH_OCI: "1"
         run: |
-          cog push "r8.im/$MODEL_NAME" --json > reports/push.json 2> >(tee reports/push.log >&2)
+          for attempt in 1 2 3; do
+            if cog push "r8.im/$MODEL_NAME" --json > reports/push.json 2> >(tee reports/push.log >&2); then
+              exit 0
+            fi
+            echo "::warning::cog push attempt $attempt failed"
+            sleep $((attempt * 30))
+          done
+          echo '::error::cog push failed after 3 attempts'
+          exit 1
       - name: Verify the exact immutable pushed image offline
         if: steps.publish.outputs.ready == 'true'
         run: |
