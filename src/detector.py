@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 from pathlib import Path
@@ -12,6 +13,29 @@ from PIL import Image
 
 from src.postprocess import normalize_detections
 from src.schema import DetectedObject
+
+# Total classes sent to one model prompt. Requested classes keep indices 0..n-1.
+MAX_MODEL_CLASSES = 16
+_CONTRAST_PATH = Path(__file__).resolve().parents[1] / "config/contrast_classes.json"
+try:
+    _CONTRAST: dict[str, list[str]] = json.loads(_CONTRAST_PATH.read_text(encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    raise RuntimeError(f"Invalid contrast class config: {_CONTRAST_PATH}") from exc
+
+
+def contrast_classes(classes: list[str]) -> list[str]:
+    """Return deterministic extra classes that give a lone request a competitor.
+
+    Conservative by design: only the curated pairs in ``config/contrast_classes.json``
+    apply, and only when the requested class is not already part of the pair.
+    """
+    requested = set(classes)
+    extras: list[str] = []
+    for name in classes:
+        for extra in _CONTRAST.get(name, ()):
+            if extra not in requested and extra not in extras:
+                extras.append(extra)
+    return extras[:max(0, MAX_MODEL_CLASSES - len(classes))]
 
 
 def validate_quality(confidence: float, image_size: int) -> None:
@@ -52,12 +76,14 @@ class YOLOEDetector:
             os.environ["YOLO_AUTOINSTALL"] = "false"
             if importlib.util.find_spec("clip") is None:
                 raise RuntimeError("The pinned ultralytics/CLIP tokenizer must be installed at build time.")
-            import torch
-            from ultralytics import YOLOE
+            import torch  # type: ignore[import-not-found]
+            from ultralytics import YOLOE  # type: ignore[import-not-found]
 
             if device.startswith("cuda") and not torch.cuda.is_available():
                 raise RuntimeError("A CUDA GPU is required; use device='cpu' only for offline smoke tests.")
             model_factory = YOLOE
+        # Narrowed for type checkers: the branch above assigns a real factory.
+        assert model_factory is not None
         self.device = device
         self._lock = Lock()
         self.model = model_factory(str(checkpoint))
@@ -77,7 +103,8 @@ class YOLOEDetector:
         if not classes or len(classes) > 8 or any(not isinstance(name, str) or not name.strip() for name in classes):
             raise ValueError("Provide between one and eight nonempty category phrases.")
         with self._lock:
-            self.model.set_classes(list(classes))
+            extra = contrast_classes(classes)
+            self.model.set_classes(list(classes) + extra)
             results = self.model.predict(
                 source=image,
                 imgsz=image_size,
@@ -105,4 +132,5 @@ class YOLOEDetector:
                 image.width,
                 image.height,
                 confidence,
+                extra,
             )

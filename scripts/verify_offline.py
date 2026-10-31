@@ -105,7 +105,9 @@ def main() -> None:
         "gpu":torch.cuda.get_device_name() if args.device.startswith("cuda") else None,
         "setup_seconds":setup_seconds,"measurements":measurements,
         "accuracy_evaluated":False,"cost_evaluated":False,
-        "runtime_versions": {name: importlib.metadata.version(name) for name in ("ultralytics", "torch", "torchvision", "Pillow", "cog")},
+        # coglet is pinned separately from the cog SDK; record both so a report
+        # identifies the exact inference server that produced the outputs.
+        "runtime_versions": {name: importlib.metadata.version(name) for name in ("ultralytics", "torch", "torchvision", "Pillow", "cog", "coglet")},
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

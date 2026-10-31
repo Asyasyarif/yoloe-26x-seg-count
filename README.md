@@ -20,6 +20,33 @@ Labels avoid each other where space permits. Long labels scale to fit;
 tiny or crowded images can still limit readability. ZIP JSON retains full IDs
 and category names.
 
+## Output shape on Replicate
+
+The model's declared Output schema is a single `{"type": "string", "format": "uri"}`,
+and the final prediction value is always one URL. A published prediction can
+nonetheless be read back as a one-element array (`["https://…"]`).
+
+That is a bug in the Cog inference server (coglet), not in this model, and it is
+not caused by `BaseRunner`/`run`. For a scalar `-> Path`, coglet uploads the file
+and appends the URL to its internal streaming-output list, then emails a
+non-terminal `output` webhook carrying that list (`["url"]`). The terminal value
+is correctly unwrapped, but each progress webhook is sent from its own task, so
+the list-shaped one can arrive **after** the terminal one. Any client that applies
+webhooks in arrival order ends up with the array. See
+[replicate/cog#3205](https://github.com/replicate/cog/issues/3205); present in
+0.18–0.23.1, fixed upstream after 0.23.1.
+
+Consequences here:
+
+- `scripts/replicate_smoke.py` accepts a one-element array as the same single
+  artifact and records which shape it saw under `output_shape` in the report, so
+  a green workflow cannot hide a runtime regression.
+- `COGLET_WHEEL=pypi:0.23.1` is set on the build step. `build.sdk_version` pins
+  only the `cog` wheel; coglet is resolved separately and would otherwise float
+  to whatever is newest on PyPI. Pinning makes the inference server reproducible.
+- `tests/test_output_schema.py` asserts the generated Output schema is one URI and
+  never `array`. It runs on CPU without weights.
+
 ## Prompts
 
 Prefer `person, red helmet, forklift`. Simple wrappers (`count`, `find`, `detect`,
@@ -34,10 +61,12 @@ small grammar, not an LLM; explicit comma-separated category names work best.
 Colors, materials, and unfamiliar categories are best effort and can return
 zero detections. Counts describe detections and can be wrong.
 
-Cross-class boxes with IoU ≥0.90 are treated as duplicate predictions; the higher
-confidence survives with a stable tie break. Same-class suppression is left to
-YOLOE. This conservative policy reduces duplicate overlapping prompts but can
-still merge nearly coincident real objects; evaluate it on your domain.
+Cross-class boxes with IoU ≥0.60 and a higher-confidence contrast class are
+suppressed (see below). Cross-class boxes with IoU ≥0.90 are treated as duplicate
+predictions; the higher confidence survives with a stable tie break. Same-class
+suppression is left to YOLOE. This conservative policy reduces duplicate
+overlapping prompts but can still merge nearly coincident real objects; evaluate
+it on your domain.
 Inference uses external class-aware NMS (`nms=None`, `iou=0.45`,
 `agnostic_nms=False`), preventing broad cross-class suppression before the
 documented near-identical-box policy. IoU 0.45 removed duplicate detections on
@@ -46,6 +75,29 @@ distinct same-category objects with heavy overlap. Survivors are clipped,
 validated, sorted by `(y1,x1,label,-confidence)`, then
 assigned `obj_001…`. The same list drives annotation and JSON. The synchronous
 Cog runner plus a model lock serializes class mutation and inference.
+
+### Hidden contrast classes
+
+A single requested category has no competing class, so YOLOE's per-class sigmoid
+scores label every person-like region `woman`. For prompts where one category is
+listed, the detector appends curated contrast classes from
+`config/contrast_classes.json` (`woman → man, girl, boy`, `cat → dog`,
+`car → truck, bus`, `red helmet → other helmet colours`,
+`laptop → clipboard, tablet, book, folder, notebook`, …), capped at 16 total
+classes per request. Requested classes keep indices `0..n-1`.
+
+Contrast detections never reach the output. They only drop a requested box when
+they overlap it at IoU ≥0.60 with a strictly higher confidence. Contrast boxes,
+IDs, labels, counts, and JSON entries are otherwise discarded. Prompts whose
+categories have no curated contrast entry behave exactly as before. The map is
+deliberately small and heuristic; unknown or unusual prompts get no help.
+
+Curated pairs cover people, animals, vehicles, helmet colours, and common
+look-alike office/household objects (`phone → tablet, remote`,
+`bottle → cup, can`, `chair → sofa, bench`, `bag → backpack, suitcase`,
+`box → carton, crate`). They are symmetric where the confusion is, so either
+spelling of a pair benefits. A wrong contrast can only cost a detection when it
+overlaps the requested box and outscores it; an unrelated request is unchanged.
 
 ## Build and publish with GitHub Actions
 
@@ -82,7 +134,9 @@ version cannot accidentally pass publication checks.
 ## Local development
 
 Runtime: Python 3.11, Cog SDK/CLI 0.23.1, Ultralytics 8.4.193, PyTorch 2.8.0 /
-torchvision 0.23.0 CUDA 12.8, Pillow 11.3.0. The CLIP tokenizer is pinned to a
+torchvision 0.23.0 CUDA 12.8, Pillow 11.3.0. coglet is pinned to 0.23.1 via
+`COGLET_WHEEL` in the publish workflow (and can be set locally the same way);
+`sdk_version` alone does not pin it. The CLIP tokenizer is pinned to a
 full commit. Direct dependencies are pinned; each build archives all resolved
 transitive versions. See [weights/README.md](weights/README.md) for model hashes.
 
@@ -92,7 +146,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 python3 scripts/prepare_assets.py
 cog doctor
-cog build -t image-counter:local
+COGLET_WHEEL=pypi:0.23.1 cog build -t image-counter:local
 cog run image-counter:local -i image=@examples/sample.jpg -i prompt="person, bus" -o annotated.png
 cog run image-counter:local -i image=@examples/sample.jpg -i prompt="person, bus" -i output_zip=true -o results.zip
 ```
