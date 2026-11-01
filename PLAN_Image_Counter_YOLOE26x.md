@@ -261,14 +261,19 @@ Official docs state that the **first `set_classes()`** for YOLOE-26 installs/nee
 ### Inference and postprocessing
 
 1. Resolve text phrases from the prompt.
-2. Set classes on the YOLOE-26x model **for this request**, appending curated
-   *contrast* classes from `config/contrast_classes.json` (woman→man, cat→dog,
-   car→truck/bus, laptop→clipboard/tablet/book/folder/notebook, phone→tablet/remote,
-   bottle→cup/can, chair→sofa/bench, bag→backpack/suitcase, helmet colours, …) so
-   a lone category has a competitor for
-   YOLOE's per-class sigmoid scores. Requested classes keep indices `0..n-1`;
-   at most 16 classes total per request. Prompts without a curated contrast
-   entry are sent exactly as before.
+2. Set classes on the YOLOE-26x model **for this request**, appending automatic
+   *contrast* classes chosen from the generic vocabulary
+   `config/contrast_vocab.json` (1198 LVIS names) so a lone category has a
+   competitor for YOLOE's per-class sigmoid scores. The vocabulary is embedded
+   once in setup with the model's text encoder and cached in memory; per request
+   only the requested phrases are embedded, then the top-K nearest entries by
+   cosine similarity (K configurable, 6–10, default 8) are appended, excluding
+   synonyms (exact/plural label match or similarity ≥0.90) and near-duplicates of
+   already chosen entries (≥0.95). Requested classes keep indices `0..n-1`; at
+   most 16 classes total per request. No hand-picked prompt pairs: any prompt,
+   including open-vocabulary ones, gets the same treatment. `set_classes` receives
+   precomputed embeddings so the per-request text-encoder cost stays at one small
+   pass instead of a vocabulary-sized one.
 3. Run prediction once (candidate `imgsz=image_size`; `conf=confidence`; no second hidden inference).
 4. Read `result.boxes.xyxy`, `.conf`, `.cls`, and `result.names`; optionally inspect masks only for diagnostics, **not output**.
 5. Ensure each reported class belongs to the requested phrase list (or to the

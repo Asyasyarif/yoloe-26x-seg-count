@@ -78,26 +78,35 @@ Cog runner plus a model lock serializes class mutation and inference.
 
 ### Hidden contrast classes
 
-A single requested category has no competing class, so YOLOE's per-class sigmoid
-scores label every person-like region `woman`. For prompts where one category is
-listed, the detector appends curated contrast classes from
-`config/contrast_classes.json` (`woman → man, girl, boy`, `cat → dog`,
-`car → truck, bus`, `red helmet → other helmet colours`,
-`laptop → clipboard, tablet, book, folder, notebook`, …), capped at 16 total
-classes per request. Requested classes keep indices `0..n-1`.
+YOLOE scores each class with its own sigmoid, so a lone requested category has
+no competitor and labels every look-alike region with that category (`man` as
+`woman`, a clipboard as `laptop`). Every request therefore gets hidden
+competitors chosen automatically from a generic 1198-entry vocabulary
+(`config/contrast_vocab.json`, the LVIS class names). Nothing is hand-picked,
+so any prompt — including open-vocabulary ones such as `kambing`, `helm proyek`,
+or `woman` — gets the same benefit.
+
+At setup the detector embeds the whole vocabulary once with the model's own text
+encoder (`model.get_text_pe`, MobileCLIP2) and keeps the vectors in memory
+(~20 MB). Per request it embeds only the requested phrases, ranks vocabulary
+entries by cosine similarity, and appends the top 8 as contrast classes. The
+vocabulary is never re-embedded and `set_classes` embeds just the ≤16 class
+names it is given, so a request adds one small text-encoder pass. Classes
+total at most 16. Entries that are synonyms of a requested class are skipped:
+exact and plural-insensitive label matches, and anything at or above 0.90
+cosine similarity. Near-duplicates of an already chosen competitor (≥0.95) are
+skipped too, so the tail covers different confusions. Ranking is by similarity,
+then request order, then vocabulary order, so selection is deterministic.
+
+The 0.90/0.95 thresholds are calibrated on MobileCLIP2's text space, not
+measured against real images; verify them on a GPU with `scripts/evaluate.py`
+before trusting a new prompt domain.
 
 Contrast detections never reach the output. They only drop a requested box when
 they overlap it at IoU ≥0.60 with a strictly higher confidence. Contrast boxes,
-IDs, labels, counts, and JSON entries are otherwise discarded. Prompts whose
-categories have no curated contrast entry behave exactly as before. The map is
-deliberately small and heuristic; unknown or unusual prompts get no help.
-
-Curated pairs cover people, animals, vehicles, helmet colours, and common
-look-alike office/household objects (`phone → tablet, remote`,
-`bottle → cup, can`, `chair → sofa, bench`, `bag → backpack, suitcase`,
-`box → carton, crate`). They are symmetric where the confusion is, so either
-spelling of a pair benefits. A wrong contrast can only cost a detection when it
-overlaps the requested box and outscores it; an unrelated request is unchanged.
+IDs, labels, counts, and JSON entries are otherwise discarded. A wrong contrast
+can only cost a detection when it overlaps the requested box and outscores it;
+an unrelated request is unchanged.
 
 ## Build and publish with GitHub Actions
 

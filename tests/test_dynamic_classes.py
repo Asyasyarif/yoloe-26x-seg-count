@@ -38,7 +38,11 @@ class FakeYOLOE:
         self.evaluating = True
         return self
 
-    def set_classes(self, classes):
+    def get_text_pe(self, texts):
+        """Fixed vectors keep this test about the adapter contract, not selection."""
+        return [[TensorValues([float(index), 0.0, 1.0, 0.0]) for index, _ in enumerate(texts)]]
+
+    def set_classes(self, classes, embeddings=None):
         with self.lock:
             assert not self.active, "set_classes raced with predict"
         self.classes = list(classes)
@@ -69,7 +73,9 @@ def adapter(tmp_path):
     checkpoint.write_bytes(b"test checkpoint")
     encoder = tmp_path / "mobileclip2_b.ts"
     encoder.write_bytes(b"test encoder")
-    return YOLOEDetector(checkpoint, encoder=encoder, model_factory=FakeYOLOE, device="cpu")
+    detector = YOLOEDetector(checkpoint, encoder=encoder, model_factory=FakeYOLOE, device="cpu")
+    detector.warmup()
+    return detector
 
 
 def test_sequential_prompts_refresh_dynamic_class_zero(adapter):
@@ -80,9 +86,10 @@ def test_sequential_prompts_refresh_dynamic_class_zero(adapter):
     assert second[0].label == "red helmet"
     assert first[0].prompt_class_index == second[0].prompt_class_index == 0
     assert adapter.model.evaluating
-    sent = [c[1] for c in adapter.model.calls if c[0] == "classes"]
+    sent = [c[1] for c in adapter.model.calls if c[0] == "classes"][-2:]
     # Requested classes stay the 0..n-1 prefix; contrast classes are appended.
     assert [names[:1] for names in sent] == [["forklift"], ["red helmet"]]
+    assert len(sent[0]) > 1 and len(sent[1]) > 1
 
 
 def test_threshold_and_resolution_reach_one_inference(adapter):
@@ -100,11 +107,10 @@ def test_threshold_and_resolution_reach_one_inference(adapter):
     assert calls[0]["agnostic_nms"] is False
 
 
-def test_warmup_builds_two_distinct_prompt_embeddings_without_inference(adapter):
-    adapter.warmup()
-    assert adapter.model.calls == [
-        ("classes", ["person"]), ("classes", ["forklift", "red helmet"]),
-    ]
+def test_warmup_builds_prompt_embeddings_and_caches_the_vocabulary_without_inference(adapter):
+    assert adapter._vocab_embeddings is not None
+    assert len(adapter._vocab_embeddings) == len(adapter.vocab)
+    assert [c for c in adapter.model.calls if c[0] == "predict"] == []
 
 
 def test_concurrent_requests_cannot_mutate_each_others_classes(adapter):
@@ -117,9 +123,10 @@ def test_concurrent_requests_cannot_mutate_each_others_classes(adapter):
 
 @pytest.mark.parametrize("confidence,size", [(0,640), (float("nan"),640), (1,640), (0.25,641)])
 def test_invalid_quality_controls_fail_before_model_mutation(adapter, confidence, size):
+    calls_before = len(adapter.model.calls)
     with pytest.raises(ValueError):
         adapter.detect(Image.new("RGB", (64,64)), ["person"], confidence, size)
-    assert adapter.model.calls == []
+    assert len(adapter.model.calls) == calls_before
 
 
 def test_missing_assets_fail_before_model_initialization(tmp_path):

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import math
 import os
 from pathlib import Path
@@ -11,31 +10,12 @@ from typing import Callable
 
 from PIL import Image
 
+from src.contrast import CONTRAST_PER_REQUEST, load_vocab, select_contrast
 from src.postprocess import normalize_detections
 from src.schema import DetectedObject
 
 # Total classes sent to one model prompt. Requested classes keep indices 0..n-1.
 MAX_MODEL_CLASSES = 16
-_CONTRAST_PATH = Path(__file__).resolve().parents[1] / "config/contrast_classes.json"
-try:
-    _CONTRAST: dict[str, list[str]] = json.loads(_CONTRAST_PATH.read_text(encoding="utf-8"))
-except (OSError, ValueError) as exc:
-    raise RuntimeError(f"Invalid contrast class config: {_CONTRAST_PATH}") from exc
-
-
-def contrast_classes(classes: list[str]) -> list[str]:
-    """Return deterministic extra classes that give a lone request a competitor.
-
-    Conservative by design: only the curated pairs in ``config/contrast_classes.json``
-    apply, and only when the requested class is not already part of the pair.
-    """
-    requested = set(classes)
-    extras: list[str] = []
-    for name in classes:
-        for extra in _CONTRAST.get(name, ()):
-            if extra not in requested and extra not in extras:
-                extras.append(extra)
-    return extras[:max(0, MAX_MODEL_CLASSES - len(classes))]
 
 
 def validate_quality(confidence: float, image_size: int) -> None:
@@ -89,12 +69,19 @@ class YOLOEDetector:
         self.model = model_factory(str(checkpoint))
         self.model.to(device)
         self.model.eval()
+        self.vocab = load_vocab()
+        self._vocab_embeddings: list[list[float]] | None = None
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        """Text-encode ``texts`` and return plain vectors for similarity math."""
+        return [features.tolist() for features in self.model.get_text_pe(texts)[0]]
 
     def warmup(self) -> None:
-        """Load the tokenizer/text encoder in setup using two distinct class sets."""
+        """Load tokenizer/encoder and cache vocabulary embeddings for every request."""
         with self._lock:
             self.model.set_classes(["person"])
             self.model.set_classes(["forklift", "red helmet"])
+            self._vocab_embeddings = self._embed(self.vocab)
 
     def detect(
         self, image: Image.Image, classes: list[str], confidence: float, image_size: int
@@ -103,7 +90,15 @@ class YOLOEDetector:
         if not classes or len(classes) > 8 or any(not isinstance(name, str) or not name.strip() for name in classes):
             raise ValueError("Provide between one and eight nonempty category phrases.")
         with self._lock:
-            extra = contrast_classes(classes)
+            if self._vocab_embeddings is None:
+                raise RuntimeError("warmup() must cache vocabulary embeddings before detection.")
+            # One small encoder pass for this request's phrases; the 1198-entry
+            # vocabulary was embedded once in warmup and is never re-embedded.
+            embeddings = self._embed(classes)
+            limit = min(CONTRAST_PER_REQUEST, MAX_MODEL_CLASSES - len(classes))
+            extra = select_contrast(classes, embeddings, self.vocab, self._vocab_embeddings, limit)
+            # No embeddings argument: ultralytics embeds these <=16 names itself
+            # and keeps the 3-D prompt tensor its API requires.
             self.model.set_classes(list(classes) + extra)
             results = self.model.predict(
                 source=image,
